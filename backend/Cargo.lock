@@ -5,3 +5,11 @@ version = 4
 [[package]]
 name = "barkdocs-auth"
 version = "0.1.0"
+
+[[package]]
+name = "barkdocs-engine"
+version = "0.1.0"
+
+[[package]]
+name = "barkdocs-web"
+version = "0.1.0"

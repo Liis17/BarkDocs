@@ -1,0 +1,23 @@
+# Заглушки: поднимают hello-world сервисы. Порты и зависимости добавим позже.
+
+services:
+  barkdocs-auth:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: barkdocs-auth
+
+  barkdocs-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: barkdocs-engine
+
+  barkdocs-web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: barkdocs-web
