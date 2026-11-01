@@ -1,12 +1,38 @@
-# Заглушки: поднимают hello-world сервисы. Порты и зависимости добавим позже.
+# Секреты задаются в backend/.env, образец в .env.example.
+# Снаружи доступен только barkdocs-web; barkdocs-auth открыт на localhost для управления ключами.
 
 services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: barkdocs
+      POSTGRES_USER: barkdocs
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?задайте POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # Через TCP: при инициализации временный сервер слушает только unix-сокет.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U barkdocs -d barkdocs"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   barkdocs-auth:
     build:
       context: .
       dockerfile: Dockerfile
       args:
         SERVICE: barkdocs-auth
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://barkdocs:${POSTGRES_PASSWORD}@postgres/barkdocs
+      ADMIN_KEY: ${ADMIN_KEY:?задайте ADMIN_KEY}
+    ports:
+      - "127.0.0.1:8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   barkdocs-engine:
     build:
@@ -14,6 +40,13 @@ services:
       dockerfile: Dockerfile
       args:
         SERVICE: barkdocs-engine
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://barkdocs:${POSTGRES_PASSWORD}@postgres/barkdocs
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   barkdocs-web:
     build:
@@ -21,3 +54,15 @@ services:
       dockerfile: Dockerfile
       args:
         SERVICE: barkdocs-web
+    restart: unless-stopped
+    environment:
+      AUTH_URL: http://barkdocs-auth:8081
+      ENGINE_URL: http://barkdocs-engine:8082
+    ports:
+      - "8080:8080"
+    depends_on:
+      - barkdocs-auth
+      - barkdocs-engine
+
+volumes:
+  postgres-data:
