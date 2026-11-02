@@ -8,6 +8,7 @@ members = [
 
 [workspace.dependencies]
 anyhow = "1"
+argon2 = "0.6"
 axum = "0.8"
 flate2 = "1"
 futures-util = "0.3"
