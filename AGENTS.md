@@ -1,6 +1,6 @@
 # BarkDocs
 
-Бэкенд BarkDocs: индексирует документацию библиотек и отдаёт фрагменты агентам через HTTP API и MCP-сервер. Rust-workspace находится в `backend/` и состоит из трёх сервисов: `barkdocs-auth`, `barkdocs-engine`, `barkdocs-web`.
+Бэкенд BarkDocs: индексирует документацию библиотек и отдаёт фрагменты агентам через HTTP API и MCP-сервер. Веб-консоль выдаёт агентам ключи MCP и показывает использование. Rust-workspace находится в `backend/` и состоит из четырёх сервисов: `barkdocs-auth`, `barkdocs-engine`, `barkdocs-web`, `barkdocs-admin`.
 
 <!-- obsidian:start -->
 ## База знаний — Obsidian
@@ -41,7 +41,7 @@ Vault: `Obsidian/BarkDocsVault/` — память о текущем устрой
 
 Перед завершением задачи определяй все компоненты, которые могут зависеть от изменений.
 
-- Слои `barkdocs-auth`, `barkdocs-engine`, `barkdocs-web` (`backend/Cargo.toml`): проверь вызывающий код — `barkdocs-web` вызывает `barkdocs-auth` в middleware `authenticate` и `barkdocs-engine` в `mcp.rs`, а также маршрутах шлюза — и инфраструктурные зависимости (`backend/docker-compose.yml`, `backend/Dockerfile`).
+- Слои `barkdocs-auth`, `barkdocs-engine`, `barkdocs-web`, `barkdocs-admin` (`backend/Cargo.toml`): проверь вызывающий код — `barkdocs-web` вызывает `barkdocs-auth` в middleware `authenticate` и `barkdocs-engine` в `mcp.rs`, а также маршрутах шлюза; `barkdocs-admin` вызывает оба сервиса через `backend/barkdocs-admin/src/client.rs` — и инфраструктурные зависимости (`backend/docker-compose.yml`, `backend/Dockerfile`).
 - Контракты: при изменении публичного `/v1/*`, MCP-инструментов (`resolve-library-id`, `query-docs`), внутреннего HTTP `barkdocs-engine` и `barkdocs-auth`, схем Postgres `auth` и `engine` или миграций проверь производителей и потребителей. Клиентского кода в репозитории нет: клиенты — внешние агенты.
 - Совместимость: не ломай существующие контракты и сохранённые данные без явной необходимости.
 - Обратные операции: если добавлена возможность создать, включить или подключить — проверь, нужны ли удаление, отключение и восстановление.
@@ -188,7 +188,7 @@ Vault: `Obsidian/BarkDocsVault/` — память о текущем устрой
 - Есть ли изменения контрактов (`/v1/*`, MCP-инструменты, внутренние HTTP-API, схемы БД), миграций или конфигурации.
 - Существуют ли ограничения, риски или дополнительные действия при развёртывании.
 
-Раздел Visual Changes не применяется: UI в проекте нет.
+Раздел Visual Changes добавляй, если меняется веб-консоль `barkdocs-admin`; для остальных сервисов он не применяется.
 
 ### После создания PR
 

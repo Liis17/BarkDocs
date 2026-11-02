@@ -12,6 +12,7 @@ Parent: [[Index]]
 |------|-----------------|------|
 | `backend/barkdocs-engine/src/main.rs` | `main`, `AppState` | Запуск, схема `engine`, миграции, планировщик |
 | `backend/barkdocs-engine/src/api.rs` | `router`, `docs`, `resolve`, `add_library`, `sync_library` | Внутренний HTTP API |
+| `backend/barkdocs-engine/src/manage.rs` | `router`, `create_custom`, `validate_source`, `normalize_slug` | Управление библиотеками и источниками для консоли |
 | `backend/barkdocs-engine/src/db.rs` | `search_chunks`, `search_libraries`, `replace_chunks` | Запросы к БД, FTS-поиск |
 | `backend/barkdocs-engine/src/db.rs` | `claim_source`, `mark_unchanged`, `mark_failed` | Блокировка и статусы источников |
 | `backend/barkdocs-engine/src/sync.rs` | `scheduler`, `spawn_sync`, `sync_source`, `run` | Планировщик и синхронизация |
@@ -26,6 +27,12 @@ Parent: [[Index]]
 | `POST /libraries` (`url` или `name`, ровно одно) | 201 со списком библиотек. 404, если источников не найдено; 502 при ошибке регистрации |
 | `POST /sync` (`library_id`) | 202 со счётчиком источников. 404, если библиотеки нет |
 | `GET /docs?library_id=&query=&limit=` | `{library, results}`. Запрос 1–1000 символов, иначе 422. `limit` по умолчанию 10, диапазон 1–50 |
+| `GET /libraries?q=` | Все библиотеки (или по подстроке) со статусом, числом источников и запросов документации |
+| `GET /libraries/detail?library_id=` | Библиотека, алиасы, источники со статусом синхронизации и числом чанков |
+| `POST /libraries/custom` | 201. Библиотека с явными источниками (`kind` необязателен — определяется по ссылке), id, названием, описанием и алиасами. 409, если id занят; 422 — неверный источник или репозиторий не найден |
+| `PATCH /libraries`, `DELETE /libraries?library_id=` | Правка названия, описания, алиасов; удаление с источниками и чанками |
+| `POST /sources`, `DELETE /sources/{id}`, `POST /sources/{id}/sync` | Добавление (сразу синхронизируется), удаление и внеплановая проверка источника |
+| `GET /stats` | См. [[Engine/Usage|Учёт запросов]] |
 
 `library_id` — это slug вида `/owner/repo` для GitHub или `/host/path` для сайтов.
 
@@ -51,13 +58,15 @@ Parent: [[Index]]
 ## Зависимости и взаимодействия
 
 - Использует [[Engine/Discovery|Поиск библиотек]], [[Engine/Sources|Источники]] и [[Engine/SafeHttp|Безопасный HTTP-клиент]].
-- Используется [[Web/Gateway|шлюзом]] и [[Web/McpServer|MCP-сервером]].
+- Используется [[Web/Gateway|шлюзом]], [[Web/McpServer|MCP-сервером]] и [[Admin/AdminConsole|веб-консолью]].
+- `resolve` и `docs` пишут обращения в [[Engine/Usage|журнал запросов]].
 
 ## Ограничения и важные детали
 
 - Схема `engine`, миграции `sqlx::migrate!()` выполняются при старте.
 - Токен `GITHUB_TOKEN` необязателен; без него лимит GitHub API 60 запросов в час, и это логируется при старте.
-- Новый `kind` источника требует изменения `CHECK` в миграции и `sources::fetch`.
+- Новый `kind` источника требует изменения `CHECK` в миграции, `sources::fetch` и `validate_source` в `manage.rs`.
+- Ручное добавление проверяет GitHub-репозиторий через API и приводит ссылку к каноническому `https://github.com/owner/repo`; ссылки сайтов проходят `check_url`. Id по умолчанию — из первого источника (у llms — от каталога файла).
 
 ## Решения и основания
 
