@@ -1,5 +1,6 @@
 # Секреты задаются в backend/.env, образец в .env.example.
-# Снаружи доступен только barkdocs-web; barkdocs-auth открыт на localhost для управления ключами.
+# Снаружи доступны barkdocs-web (HTTP API и MCP) и barkdocs-admin (веб-консоль);
+# barkdocs-auth открыт на localhost для управления ключами мастер-ключом.
 
 services:
   postgres:
@@ -28,6 +29,9 @@ services:
     environment:
       DATABASE_URL: postgres://barkdocs:${POSTGRES_PASSWORD}@postgres/barkdocs
       ADMIN_KEY: ${ADMIN_KEY:?задайте ADMIN_KEY}
+      ADMIN_LOGIN: ${ADMIN_LOGIN:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
     ports:
       - "127.0.0.1:8081:8081"
     depends_on:
@@ -60,6 +64,25 @@ services:
       ENGINE_URL: http://barkdocs-engine:8082
     ports:
       - "8080:8080"
+    depends_on:
+      - barkdocs-auth
+      - barkdocs-engine
+
+  barkdocs-admin:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        SERVICE: barkdocs-admin
+    restart: unless-stopped
+    environment:
+      AUTH_URL: http://barkdocs-auth:8081
+      ENGINE_URL: http://barkdocs-engine:8082
+      MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:-http://localhost:8080/mcp}
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+    ports:
+      - "8083:8083"
     depends_on:
       - barkdocs-auth
       - barkdocs-engine

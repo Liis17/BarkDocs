@@ -1,171 +1,56 @@
-//! Сервис авторизации: выдача, отзыв и проверка API-ключей.
-//! В БД хранится только sha256 ключа, сам ключ показывается один раз при создании.
+//! Сервис авторизации: аккаунты веб-консоли, их сессии и API-ключи агентов.
+//! В БД хранятся только хеши: sha256 для ключей и сессий, argon2id для паролей.
 
-use std::str::FromStr;
+mod crypto;
+mod error;
+mod keys;
+mod principal;
+mod users;
+
+use std::{str::FromStr, sync::Arc};
 
 use axum::{
-    Json, Router,
-    extract::{Path, State},
-    http::{HeaderMap, StatusCode, header},
+    Router,
     routing::{delete, get, post},
 };
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use sqlx::{
     Connection, PgConnection, PgPool,
     postgres::{PgConnectOptions, PgPoolOptions},
 };
 
 #[derive(Clone)]
-struct AppState {
-    pool: PgPool,
-    admin_key_hash: Vec<u8>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "lowercase")]
-enum Role {
-    Admin,
-    User,
-}
-
-#[derive(Serialize)]
-struct VerifyResponse {
-    role: Role,
-}
-
-#[derive(Deserialize)]
-struct CreateKeyRequest {
-    name: String,
-}
-
-#[derive(Serialize)]
-struct CreatedKey {
-    id: i64,
-    name: String,
-    key: String,
-}
-
-#[derive(Serialize, sqlx::FromRow)]
-struct KeyInfo {
-    id: i64,
-    name: String,
-    created_at: String,
-    revoked_at: Option<String>,
-}
-
-fn hash_key(key: &str) -> Vec<u8> {
-    Sha256::digest(key.as_bytes()).to_vec()
-}
-
-fn generate_key() -> anyhow::Result<String> {
-    let mut bytes = [0u8; 32];
-    getrandom::fill(&mut bytes).map_err(|e| anyhow::anyhow!("getrandom: {e}"))?;
-    Ok(format!("bd_{}", hex::encode(bytes)))
-}
-
-fn bearer(headers: &HeaderMap) -> Option<&str> {
-    headers
-        .get(header::AUTHORIZATION)?
-        .to_str()
-        .ok()?
-        .strip_prefix("Bearer ")
-}
-
-fn internal(err: impl std::fmt::Display) -> StatusCode {
-    tracing::error!("{err}");
-    StatusCode::INTERNAL_SERVER_ERROR
-}
-
-fn require_admin(state: &AppState, headers: &HeaderMap) -> Result<(), StatusCode> {
-    match bearer(headers) {
-        Some(key) if hash_key(key) == state.admin_key_hash => Ok(()),
-        _ => Err(StatusCode::UNAUTHORIZED),
-    }
-}
-
-async fn verify(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<VerifyResponse>, StatusCode> {
-    let key = bearer(&headers).ok_or(StatusCode::UNAUTHORIZED)?;
-    let hash = hash_key(key);
-    if hash == state.admin_key_hash {
-        return Ok(Json(VerifyResponse { role: Role::Admin }));
-    }
-    let active: Option<i64> =
-        sqlx::query_scalar("SELECT id FROM api_keys WHERE key_hash = $1 AND revoked_at IS NULL")
-            .bind(hash)
-            .fetch_optional(&state.pool)
-            .await
-            .map_err(internal)?;
-    match active {
-        Some(_) => Ok(Json(VerifyResponse { role: Role::User })),
-        None => Err(StatusCode::UNAUTHORIZED),
-    }
-}
-
-async fn create_key(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(req): Json<CreateKeyRequest>,
-) -> Result<(StatusCode, Json<CreatedKey>), StatusCode> {
-    require_admin(&state, &headers)?;
-    let name = req.name.trim().to_string();
-    if name.is_empty() {
-        return Err(StatusCode::UNPROCESSABLE_ENTITY);
-    }
-    let key = generate_key().map_err(internal)?;
-    let id: i64 =
-        sqlx::query_scalar("INSERT INTO api_keys (name, key_hash) VALUES ($1, $2) RETURNING id")
-            .bind(&name)
-            .bind(hash_key(&key))
-            .fetch_one(&state.pool)
-            .await
-            .map_err(internal)?;
-    Ok((StatusCode::CREATED, Json(CreatedKey { id, name, key })))
-}
-
-async fn list_keys(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Result<Json<Vec<KeyInfo>>, StatusCode> {
-    require_admin(&state, &headers)?;
-    let keys = sqlx::query_as(
-        "SELECT id, name, created_at::text AS created_at, revoked_at::text AS revoked_at
-         FROM api_keys ORDER BY id",
-    )
-    .fetch_all(&state.pool)
-    .await
-    .map_err(internal)?;
-    Ok(Json(keys))
-}
-
-async fn revoke_key(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(id): Path<i64>,
-) -> Result<StatusCode, StatusCode> {
-    require_admin(&state, &headers)?;
-    let result =
-        sqlx::query("UPDATE api_keys SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL")
-            .bind(id)
-            .execute(&state.pool)
-            .await
-            .map_err(internal)?;
-    if result.rows_affected() == 0 {
-        return Err(StatusCode::NOT_FOUND);
-    }
-    Ok(StatusCode::NO_CONTENT)
+pub struct AppState {
+    pub pool: PgPool,
+    pub admin_key_hash: Vec<u8>,
+    /// Логин администратора из окружения; занять его регистрацией нельзя.
+    pub admin_login: Option<String>,
+    pub allow_registration: bool,
+    pub login_limiter: Arc<users::LoginLimiter>,
 }
 
 fn router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(|| async { "ok" }))
-        .route("/verify", post(verify))
-        .route("/keys", post(create_key).get(list_keys))
-        .route("/keys/{id}", delete(revoke_key))
+        .route("/verify", post(keys::verify))
+        .route("/keys", post(keys::create_key).get(keys::list_keys))
+        .route("/keys/{id}", delete(keys::revoke_key))
+        .route("/register", post(users::register))
+        .route("/sessions", post(users::login).delete(users::logout))
+        .route("/me", get(users::me))
+        .route("/me/password", post(users::change_password))
+        .route("/users", get(users::list_users))
+        .route(
+            "/users/{id}",
+            get(users::get_user).patch(users::update_user),
+        )
         .with_state(state)
+}
+
+fn env_flag(name: &str, default: bool) -> bool {
+    match std::env::var(name) {
+        Ok(value) => matches!(value.trim(), "1" | "true" | "yes" | "on"),
+        Err(_) => default,
+    }
 }
 
 #[tokio::main]
@@ -181,6 +66,22 @@ async fn main() -> anyhow::Result<()> {
         admin_key.len() >= 32,
         "ADMIN_KEY должен быть задан и содержать минимум 32 символа"
     );
+    let admin_password = std::env::var("ADMIN_PASSWORD")
+        .ok()
+        .filter(|p| !p.is_empty());
+    let admin_login = match &admin_password {
+        Some(_) => {
+            let raw = std::env::var("ADMIN_LOGIN").unwrap_or_else(|_| "admin".into());
+            Some(
+                users::normalize_login(&raw)
+                    .map_err(|e| anyhow::anyhow!("ADMIN_LOGIN: {}", e.1))?,
+            )
+        }
+        None => {
+            tracing::warn!("ADMIN_PASSWORD не задан: войти в веб-консоль администратором нельзя");
+            None
+        }
+    };
 
     // У каждого сервиса своя схема: иначе миграции конфликтуют в общей _sqlx_migrations.
     let options = PgConnectOptions::from_str(&std::env::var("DATABASE_URL")?)?;
@@ -198,35 +99,21 @@ async fn main() -> anyhow::Result<()> {
 
     let state = AppState {
         pool,
-        admin_key_hash: hash_key(&admin_key),
+        admin_key_hash: crypto::hash_token(&admin_key),
+        admin_login,
+        allow_registration: env_flag("ALLOW_REGISTRATION", true),
+        login_limiter: Arc::default(),
     };
+    if let Some(password) = &admin_password {
+        users::bootstrap_admin(&state, password).await?;
+    }
+    if !state.allow_registration {
+        tracing::info!("регистрация новых пользователей отключена");
+    }
+
     let addr = std::env::var("BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:8081".into());
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!("barkdocs-auth слушает {addr}");
     axum::serve(listener, router(state)).await?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn generated_keys_are_unique_and_prefixed() {
-        let a = generate_key().unwrap();
-        let b = generate_key().unwrap();
-        assert_ne!(a, b);
-        assert!(a.starts_with("bd_"));
-        assert_eq!(a.len(), 3 + 64);
-    }
-
-    #[test]
-    fn bearer_requires_exact_scheme() {
-        let mut headers = HeaderMap::new();
-        assert_eq!(bearer(&headers), None);
-        headers.insert(header::AUTHORIZATION, "Basic abc".parse().unwrap());
-        assert_eq!(bearer(&headers), None);
-        headers.insert(header::AUTHORIZATION, "Bearer abc".parse().unwrap());
-        assert_eq!(bearer(&headers), Some("abc"));
-    }
 }

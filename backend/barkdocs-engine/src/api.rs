@@ -3,7 +3,7 @@
 use axum::{
     Json, Router,
     extract::{Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -13,12 +13,23 @@ use serde_json::json;
 use crate::{
     AppState, db,
     discovery::{self, AddLibrary},
-    sync,
+    manage, sync,
+    usage::{self, Caller},
 };
 
 const MAX_QUERY_CHARS: usize = 1000;
 
-struct ApiError(StatusCode, String);
+pub struct ApiError(pub StatusCode, pub String);
+
+impl ApiError {
+    pub fn internal(message: &str) -> Self {
+        tracing::error!("{message}");
+        Self(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "внутренняя ошибка".into(),
+        )
+    }
+}
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
@@ -36,7 +47,7 @@ impl From<sqlx::Error> for ApiError {
     }
 }
 
-fn bad_request(message: impl Into<String>) -> ApiError {
+pub fn bad_request(message: impl Into<String>) -> ApiError {
     ApiError(StatusCode::UNPROCESSABLE_ENTITY, message.into())
 }
 
@@ -49,6 +60,7 @@ struct ResolveParams {
 /// Найденное скачивается в фоне: клиент видит статус `indexing`.
 async fn resolve(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(params): Query<ResolveParams>,
 ) -> Result<Json<Vec<db::LibraryRow>>, ApiError> {
     let name = params.name.trim();
@@ -62,7 +74,13 @@ async fn resolve(
             }
         }
     }
-    Ok(Json(db::search_libraries(&state.pool, name).await?))
+    let libraries = db::search_libraries(&state.pool, name).await?;
+    usage::record(
+        &state.pool,
+        Caller::from_headers(&headers),
+        usage::Record::resolve(name, libraries.len()),
+    );
+    Ok(Json(libraries))
 }
 
 #[derive(Deserialize)]
@@ -80,6 +98,7 @@ struct DocsResponse {
 
 async fn docs(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(params): Query<DocsParams>,
 ) -> Result<Json<DocsResponse>, ApiError> {
     if params.query.trim().is_empty() || params.query.chars().count() > MAX_QUERY_CHARS {
@@ -92,6 +111,11 @@ async fn docs(
         .ok_or_else(|| ApiError(StatusCode::NOT_FOUND, "библиотека не найдена".into()))?;
     let limit = params.limit.unwrap_or(10).clamp(1, db::MAX_RESULTS);
     let results = db::search_chunks(&state.pool, &params.library_id, &params.query, limit).await?;
+    usage::record(
+        &state.pool,
+        Caller::from_headers(&headers),
+        usage::Record::docs(&library.library_id, &params.query, &results),
+    );
     Ok(Json(DocsResponse { library, results }))
 }
 
@@ -172,5 +196,7 @@ pub fn router(state: AppState) -> Router {
         .route("/libraries", post(add_library))
         .route("/sync", post(sync_library))
         .route("/docs", get(docs))
+        .route("/stats", get(usage::stats))
+        .merge(manage::router())
         .with_state(state)
 }

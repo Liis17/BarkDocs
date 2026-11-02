@@ -10,7 +10,8 @@ Parent: [[Index]]
 
 | Файл | Значимый символ | Роль |
 |------|-----------------|------|
-| `backend/barkdocs-web/src/main.rs` | `authenticate` | Middleware: проверка ключа через `POST /verify` |
+| `backend/barkdocs-web/src/main.rs` | `authenticate`, `Identity` | Middleware: проверка ключа через `POST /verify`, роль, владелец и id ключа |
+| `backend/barkdocs-web/src/main.rs` | `engine_get`, `Channel` | Запрос к движку с заголовками владельца, ключа и канала |
 | `backend/barkdocs-web/src/main.rs` | `require_admin` | Пропускает только роль `admin` |
 | `backend/barkdocs-web/src/main.rs` | `forward` | Передаёт ответ движка клиенту без изменений |
 | `backend/barkdocs-web/src/main.rs` | `router` | Таблица маршрутов и порядок middleware |
@@ -39,6 +40,7 @@ Parent: [[Index]]
 ## Ограничения и важные детали
 
 - Заголовок `Authorization` передаётся в auth как есть; роль не кэшируется, проверка выполняется на каждый запрос.
+- Движку передаются `x-barkdocs-user-id`, `x-barkdocs-key-id` (если есть) и `x-barkdocs-channel` (`api` для `/v1/*`, `mcp` для MCP) для [[Engine/Usage|учёта запросов]]. Клиент повлиять на них не может: шлюз строит запрос к движку сам.
 - Таймаут 180 секунд задан потому, что поиск в реестрах при `resolve` синхронный и может занимать десятки секунд. Основание: комментарий в `main.rs`.
 
 ## Решения и основания

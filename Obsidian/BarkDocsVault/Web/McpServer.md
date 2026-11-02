@@ -28,7 +28,7 @@ MCP-сервер в транспорте Streamable HTTP без сессий. Д
 
 ## Зависимости и взаимодействия
 
-- Вызывает [[Engine/DocsEngine|DocsEngine]] через `GET /libraries/resolve` и `GET /docs`.
+- Вызывает [[Engine/DocsEngine|DocsEngine]] через `GET /libraries/resolve` и `GET /docs` с каналом `mcp` и владельцем ключа: запросы попадают в [[Engine/Usage|учёт]].
 - Не имеет собственной авторизации: доступ даёт шлюз.
 
 ## Ограничения и важные детали
