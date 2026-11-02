@@ -31,9 +31,28 @@ enum Role {
     User,
 }
 
-#[derive(Deserialize)]
-struct VerifyResponse {
+/// Кто обращается: роль ключа и, для ключей агентов, владелец и сам ключ — для учёта запросов.
+#[derive(Clone, Copy, Deserialize)]
+pub struct Identity {
     role: Role,
+    user_id: Option<i64>,
+    key_id: Option<i64>,
+}
+
+/// Через что пришёл запрос; движок ведёт по нему раздельную статистику.
+#[derive(Clone, Copy)]
+pub enum Channel {
+    Api,
+    Mcp,
+}
+
+impl Channel {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Api => "api",
+            Self::Mcp => "mcp",
+        }
+    }
 }
 
 /// Ошибка auth-сервиса закрывает доступ: без проверки ключа запросы не проходят.
@@ -47,17 +66,17 @@ async fn authenticate(State(state): State<AppState>, mut request: Request, next:
         .header(header::AUTHORIZATION, authorization)
         .send()
         .await;
-    let role = match verified {
+    let identity = match verified {
         Ok(response) if response.status() == StatusCode::UNAUTHORIZED => return unauthorized(),
-        Ok(response) if response.status().is_success() => {
-            response.json::<VerifyResponse>().await.map(|v| v.role)
-        }
-        Ok(response) => response.error_for_status().map(|_| Role::User),
+        Ok(response) => match response.error_for_status() {
+            Ok(response) => response.json::<Identity>().await,
+            Err(err) => Err(err),
+        },
         Err(err) => Err(err),
     };
-    match role {
-        Ok(role) => {
-            request.extensions_mut().insert(role);
+    match identity {
+        Ok(identity) => {
+            request.extensions_mut().insert(identity);
             next.run(request).await
         }
         Err(err) => {
@@ -70,8 +89,12 @@ async fn authenticate(State(state): State<AppState>, mut request: Request, next:
     }
 }
 
-async fn require_admin(Extension(role): Extension<Role>, request: Request, next: Next) -> Response {
-    if role != Role::Admin {
+async fn require_admin(
+    Extension(identity): Extension<Identity>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if identity.role != Role::Admin {
         return error_response(StatusCode::FORBIDDEN, "нужен admin-ключ");
     }
     next.run(request).await
@@ -125,10 +148,26 @@ struct DocsParams {
 }
 
 impl AppState {
-    pub fn engine_get<Q: Serialize>(&self, path: &str, query: &Q) -> reqwest::RequestBuilder {
-        self.http
+    /// Запрос к движку от имени клиента: заголовки сообщают, кому засчитать запрос.
+    pub fn engine_get<Q: Serialize>(
+        &self,
+        identity: &Identity,
+        channel: Channel,
+        path: &str,
+        query: &Q,
+    ) -> reqwest::RequestBuilder {
+        let mut request = self
+            .http
             .get(format!("{}{path}", self.engine_url))
             .query(query)
+            .header("x-barkdocs-channel", channel.as_str());
+        if let Some(user_id) = identity.user_id {
+            request = request.header("x-barkdocs-user-id", user_id);
+        }
+        if let Some(key_id) = identity.key_id {
+            request = request.header("x-barkdocs-key-id", key_id);
+        }
+        request
     }
 
     fn engine_post(&self, path: &str, body: &Value) -> reqwest::RequestBuilder {
@@ -138,12 +177,22 @@ impl AppState {
     }
 }
 
-async fn resolve(State(state): State<AppState>, Query(params): Query<ResolveParams>) -> Response {
-    forward(state.engine_get("/libraries/resolve", &params).send().await).await
+async fn resolve(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Query(params): Query<ResolveParams>,
+) -> Response {
+    let request = state.engine_get(&identity, Channel::Api, "/libraries/resolve", &params);
+    forward(request.send().await).await
 }
 
-async fn docs(State(state): State<AppState>, Query(params): Query<DocsParams>) -> Response {
-    forward(state.engine_get("/docs", &params).send().await).await
+async fn docs(
+    State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
+    Query(params): Query<DocsParams>,
+) -> Response {
+    let request = state.engine_get(&identity, Channel::Api, "/docs", &params);
+    forward(request.send().await).await
 }
 
 async fn add_library(State(state): State<AppState>, Json(body): Json<Value>) -> Response {

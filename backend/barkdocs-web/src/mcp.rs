@@ -2,7 +2,7 @@
 //! Спецификация допускает такой режим; GET /mcp отвечает 405, потому что потока событий нет.
 
 use axum::{
-    Json,
+    Extension, Json,
     extract::State,
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
@@ -10,7 +10,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::AppState;
+use crate::{AppState, Channel, Identity};
 
 const PROTOCOL_VERSIONS: [&str; 3] = ["2025-11-25", "2025-06-18", "2025-03-26"];
 const METHOD_NOT_FOUND: i64 = -32601;
@@ -18,6 +18,7 @@ const INVALID_PARAMS: i64 = -32602;
 
 pub async fn handle(
     State(state): State<AppState>,
+    Extension(identity): Extension<Identity>,
     headers: HeaderMap,
     Json(message): Json<Value>,
 ) -> Response {
@@ -36,7 +37,7 @@ pub async fn handle(
         "initialize" => Ok(initialize(params)),
         "ping" => Ok(json!({})),
         "tools/list" => Ok(tools_list()),
-        "tools/call" => tools_call(&state, params).await,
+        "tools/call" => tools_call(&state, &identity, params).await,
         other => Err((METHOD_NOT_FOUND, format!("неизвестный метод: {other}"))),
     };
     let body = match outcome {
@@ -101,7 +102,11 @@ fn tool_text(text: String, is_error: bool) -> Value {
     json!({ "content": [{ "type": "text", "text": text }], "isError": is_error })
 }
 
-async fn tools_call(state: &AppState, params: &Value) -> Result<Value, (i64, String)> {
+async fn tools_call(
+    state: &AppState,
+    identity: &Identity,
+    params: &Value,
+) -> Result<Value, (i64, String)> {
     let args = &params["arguments"];
     let required = |name: &str| {
         args[name]
@@ -112,7 +117,12 @@ async fn tools_call(state: &AppState, params: &Value) -> Result<Value, (i64, Str
     let result = match params["name"].as_str().unwrap_or_default() {
         "resolve-library-id" => {
             let name = required("libraryName")?;
-            let request = state.engine_get("/libraries/resolve", &[("name", name)]);
+            let request = state.engine_get(
+                identity,
+                Channel::Mcp,
+                "/libraries/resolve",
+                &[("name", name)],
+            );
             engine_json::<Vec<Library>>(request)
                 .await
                 .map(|l| format_libraries(&l))
@@ -120,8 +130,12 @@ async fn tools_call(state: &AppState, params: &Value) -> Result<Value, (i64, Str
         "query-docs" => {
             let library_id = required("libraryId")?;
             let query = required("query")?;
-            let request =
-                state.engine_get("/docs", &[("library_id", library_id), ("query", query)]);
+            let request = state.engine_get(
+                identity,
+                Channel::Mcp,
+                "/docs",
+                &[("library_id", library_id), ("query", query)],
+            );
             engine_json::<Docs>(request).await.map(|d| format_docs(&d))
         }
         other => return Err((INVALID_PARAMS, format!("неизвестный инструмент: {other}"))),
