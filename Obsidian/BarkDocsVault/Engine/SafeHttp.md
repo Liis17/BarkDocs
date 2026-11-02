@@ -28,7 +28,7 @@ Parent: [[Index]]
 
 ## Зависимости и взаимодействия
 
-- Используется [[Engine/Sources|Источниками]], [[Engine/Discovery|Поиском библиотек]] и [[Engine/DocsEngine|DocsEngine]] для llms-проб.
+- Используется [[Engine/Sources|Источниками]] и [[Engine/Discovery|Поиском библиотек]] (проба llms-файла в `discovery.rs`, `register`).
 - Не используется шлюзом: межсервисные вызовы идут через отдельный клиент `reqwest` в [[Web/Gateway|Gateway]].
 
 ## Ограничения и важные детали
