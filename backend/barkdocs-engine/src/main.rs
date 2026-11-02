@@ -6,8 +6,10 @@ mod chunk;
 mod db;
 mod discovery;
 mod http;
+mod manage;
 mod sources;
 mod sync;
+mod usage;
 
 use std::{str::FromStr, sync::Arc};
 

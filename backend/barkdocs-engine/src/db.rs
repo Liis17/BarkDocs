@@ -44,7 +44,7 @@ pub struct ClaimedSource {
     pub version: Option<String>,
 }
 
-const LIBRARY_COLUMNS: &str = "
+pub const LIBRARY_COLUMNS: &str = "
     l.slug AS library_id, l.name, l.description, l.stars,
     (SELECT count(*) FROM chunks c JOIN sources s ON s.id = c.source_id WHERE s.library_id = l.id)
         AS chunks,
@@ -68,7 +68,7 @@ pub async fn get_library(pool: &PgPool, slug: &str) -> sqlx::Result<Option<Libra
         .await
 }
 
-fn like_pattern(name: &str) -> String {
+pub fn like_pattern(name: &str) -> String {
     let escaped = name
         .replace('\\', "\\\\")
         .replace('%', "\\%")

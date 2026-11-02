@@ -180,7 +180,7 @@ pub fn from_link(raw: &str) -> anyhow::Result<Candidate> {
     })
 }
 
-fn site_slug(url: &Url) -> String {
+pub fn site_slug(url: &Url) -> String {
     let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
     let path = url.path().trim_matches('/').to_ascii_lowercase();
     if path.is_empty() {
